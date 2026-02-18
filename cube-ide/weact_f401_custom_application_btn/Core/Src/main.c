@@ -65,6 +65,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  __enable_irq();
+
 
   /* USER CODE END 1 */
 

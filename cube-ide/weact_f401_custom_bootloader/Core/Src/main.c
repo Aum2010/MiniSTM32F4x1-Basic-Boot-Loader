@@ -174,36 +174,85 @@ void SystemClock_Config(void)
 
 /* USER CODE BEGIN 4 */
 
+typedef void (*pFunction)(void);
+
+/**
+ * @brief  Jump execution from bootloader to application firmware.
+ *
+ * This function transfers CPU control to an application located at the
+ * specified flash address. It performs a full context cleanup before
+ * switching execution, including:
+ *
+ * - Disabling global interrupts
+ * - Deinitializing HAL and RCC configuration
+ * - Disabling SysTick timer
+ * - Clearing and disabling all NVIC interrupts
+ * - Validating application stack pointer
+ * - Relocating vector table (VTOR)
+ * - Setting Main Stack Pointer (MSP)
+ * - Jumping to application reset handler
+ *
+ * @param[in] app_addr  Start address of the application firmware.
+ *                      This address must point to the application's
+ *                      vector table in Flash.
+ *
+ * @note
+ * The first word at @p app_addr must contain a valid initial stack
+ * pointer (SRAM address). The second word must contain the reset
+ * handler entry point.
+ *
+ * @warning
+ * - The application must be built with correct FLASH origin.
+ * - VECT_TAB_OFFSET must match the application base address.
+ * - This function does not return.
+ *
+ * @retval None
+ */
 void jump_to_app(uint32_t app_addr)
 {
-	uint32_t i=0;
+    uint32_t stack;
+    pFunction app_reset_handler;
 
-	void (*app_reset_handler)(void);
-
+    /* Disable global interrupts */
     __disable_irq();
 
+    /* Deinitialize HAL and reset clock configuration */
     HAL_DeInit();
     HAL_RCC_DeInit();
 
-    __set_MSP(*(volatile uint32_t*) app_addr);
+    /* Disable SysTick timer */
     SysTick->CTRL = 0;
     SysTick->LOAD = 0;
-    SysTick->VAL = 0;
+    SysTick->VAL  = 0;
 
-	/* Clear Interrupt Enable Register & Interrupt Pending Register */
-	for (i=0;i<5;i++)
-	{
-		NVIC->ICER[i]=0xFFFFFFFF;
-		NVIC->ICPR[i]=0xFFFFFFFF;
-	}
+    /* Disable and clear all NVIC interrupts */
+    for (uint32_t i = 0; i < 5; i++)
+    {
+        NVIC->ICER[i] = 0xFFFFFFFF;
+        NVIC->ICPR[i] = 0xFFFFFFFF;
+    }
 
-	/* Re-enable all interrupts */
-	__enable_irq();
+    /* Validate initial stack pointer (must point to SRAM) */
+    stack = *(volatile uint32_t*)app_addr;
+    if ((stack & 0x2FFE0000) != 0x20000000)
+        return;
 
-    app_reset_handler = (void (*)(void)) (*((uint32_t *) ((app_addr + 4))));
+    /* Relocate vector table to application base address */
+    SCB->VTOR = app_addr;
+
+    /* Set Main Stack Pointer to application's stack pointer */
+    __set_MSP(stack);
+
+    /* Read application's reset handler address */
+    app_reset_handler =
+        (pFunction)*(volatile uint32_t*)(app_addr + 4);
+
+    /* Jump to application reset handler */
     app_reset_handler();
-}
 
+    /* Should never reach here */
+    while (1);
+}
 /* USER CODE END 4 */
 
 /**
